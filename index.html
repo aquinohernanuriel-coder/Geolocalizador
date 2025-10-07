@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Geolocalizador — Consentimiento</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#0b0b0b; --panel:#151515; --accent:#5bd3ff; --accent2:#80c080; --muted:#9fb8a8;
+    --card:#0e0e0e;
+  }
+  body,html{
+    height:100%;margin:0;background:var(--bg);font-family:Inter,'Orbitron',sans-serif;color:#eaf7ee;
+  }
+  #map{position:fixed;inset:0;z-index:1}
+  .ui {
+    position: absolute; right: 18px; top: 72px; width:360px; z-index:1100;
+    background:var(--panel); padding:18px; border-radius:12px;
+    box-shadow:0 14px 40px rgba(0,0,0,0.7); border:1px solid rgba(255,255,255,0.03);
+  }
+  .ui h2{margin:0 0 8px 0;color:var(--accent2); font-size:1.1rem}
+  .ui p{margin:6px 0;color:var(--muted);font-size:0.95rem}
+  .controls { display:flex; gap:10px; margin-top:10px; }
+  button.primary{background:var(--accent);border:none;padding:10px 12px;border-radius:8px;color:#042;cursor:pointer;font-weight:700}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:var(--muted);cursor:pointer}
+  .consent-modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2000; background:rgba(0,0,0,0.7); }
+  .consent-box { width:760px; max-width:94%; background: var(--card); padding:20px; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.7); color:#e6f4ea }
+  .consent-box h3 { margin:0 0 8px 0; color:var(--accent2) }
+  .consent-actions { display:flex; gap:12px; margin-top:12px; justify-content:flex-end }
+  .small { font-size:0.85rem; color:var(--muted) }
+  .result-card {
+    margin-top:12px; font-size:0.95rem; color:#dfefe0;
+    background-color:#0b0b0b; padding:12px; border-radius:10px; border:1px solid rgba(128,192,128,0.03);
+  }
+  .key { color:var(--accent2); font-weight:700; }
+  .value { color:#eaf7ee; margin-left:6px; }
+  .note { font-size:0.82rem; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="ui" id="panel">
+  <h2>Geolocalización & IP</h2>
+  <p class="small">Antes de ver tu ubicación, debes leer y aceptar los acuerdos legales.</p>
+
+  <div class="controls">
+    <button class="primary" id="btnSend">Ver mi ubicación</button>
+    <button class="ghost" id="btnShowPolicy">Ver política</button>
+  </div>
+
+  <div id="result" class="result-card" aria-live="polite">
+    <div><span class="key">Estado:</span><span id="status" class="value">aún no se ha enviado</span></div>
+    <div style="margin-top:8px"><span class="key">Dirección:</span><span id="addr" class="value">—</span></div>
+    <div style="margin-top:6px"><span class="key">Lat/Lng:</span><span id="latlng" class="value">—</span></div>
+    <div style="margin-top:6px"><span class="key">IP pública (cliente):</span><span id="clientIp" class="value">—</span></div>
+    <div style="margin-top:6px"><span class="key">IP detectada (servidor):</span><span id="serverIp" class="value">—</span></div>
+    <div class="note">La IP detectada por el servidor.</div>
+  </div>
+</div>
+
+<!-- Consent modal -->
+<div id="consent" class="consent-modal" style="display:flex">
+  <div class="consent-box">
+    <h3>Acuerdo de consentimiento para geolocalización</h3>
+    <p class="small">Al aceptar permites que este te muestre tu ubicación (GPS) y tu IP pública. La IP asociada a tu petición será registrada en el servidor para fines legítimos indicados. Los datos se retendrán por un periodo limitado.</p>
+
+    <h4 style="margin:10px 0 6px 0; color:var(--accent2)">Resumen legal / Política</h4>
+    <ul style="color:var(--muted); font-size:0.92rem">
+      <li>Finalidad: registro de ubicación para soporte y análisis.</li>
+      <li>Base legal: consentimiento explícito del usuario.</li>
+      <li>Retención: datos almacenados 90 días (configurable).</li>
+      <li>Derechos: solicitar acceso, rectificación o eliminación contactando al administrador.</li>
+    </ul>
+
+    <div class="consent-actions">
+      <button id="btnDecline" class="ghost">Rechazar</button>
+      <button id="btnAccept" class="primary">Acepto y enviar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Mapa
+  const map = L.map('map', { zoomControl: true }).setView([20,0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+
+  // DOM
+  const statusEl = document.getElementById('status');
+  const addrEl = document.getElementById('addr');
+  const latlngEl = document.getElementById('latlng');
+  const clientIpEl = document.getElementById('clientIp');
+  const serverIpEl = document.getElementById('serverIp');
+  const btnSend = document.getElementById('btnSend');
+  const consentModal = document.getElementById('consent');
+  const btnAccept = document.getElementById('btnAccept');
+  const btnDecline = document.getElementById('btnDecline');
+
+  let userConsented = false;
+
+  btnDecline.addEventListener('click', () => {
+    consentModal.style.display = 'none';
+    userConsented = false;
+    statusEl.textContent = 'Has rechazado el consentimiento.';
+    alert('Has rechazado. No se enviará tu ubicación.');
+  });
+
+  btnAccept.addEventListener('click', () => {
+    userConsented = true;
+    consentModal.style.display = 'none';
+    statusEl.textContent = 'Consentimiento dado. Pulsa "Enviar mi ubicación".';
+  });
+
+  // botón ver política
+  document.getElementById('btnShowPolicy').addEventListener('click', () => {
+    alert(
+`Política resumida:
+- Finalidad: registro de ubicación e IP.
+- Base legal: consentimiento del usuario.
+- Retención: 90 días.
+- Derechos: solicitar acceso/rectificación/eliminación.
+Contacto: admin@tudominio.com`
+    );
+  });
+
+  // función robusta para obtener IP pública (intenta ipify y fallback a ifconfig.co)
+  async function fetchPublicIp() {
+    try {
+      const res1 = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' , mode:'cors' });
+      if (res1.ok) {
+        const j = await res1.json();
+        if (j.ip) return j.ip;
+      }
+    } catch(e){ /* ignore */ }
+
+    try {
+      const res2 = await fetch('https://ifconfig.co/json', { cache: 'no-store' , mode:'cors' });
+      if (res2.ok) {
+        const j = await res2.json();
+        if (j.ip) return j.ip;
+      }
+    } catch(e){ /* ignore */ }
+
+    return null;
+  }
+
+  btnSend.addEventListener('click', async () => {
+    if (!userConsented) { alert('Debes aceptar los acuerdos legales antes de enviar tu ubicación.'); return; }
+    if (!navigator.geolocation) { alert('Geolocalización no soportada'); return; }
+
+    statusEl.textContent = 'Obteniendo ubicación (alta precisión)...';
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      latlngEl.textContent = `${lat.toFixed(8)}, ${lon.toFixed(8)}`;
+
+      statusEl.textContent = 'Obteniendo IP pública...';
+      let clientIp = await fetchPublicIp();
+      clientIpEl.textContent = clientIp || '(no disponible)';
+
+      statusEl.textContent = 'Enviando al servidor...';
+
+      // Payload: incluimos clientIp solo como referencia; el servidor debe extraer la IP real desde la petición.
+      const payload = {
+        latitude: lat,
+        longitude: lon,
+        clientPublicIp: clientIp || null,
+        consent: true,
+        clientNote: 'Usuario dio consentimiento desde UI'
+      };
+
+      try {
+        const resp = await fetch('/location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const txt = await resp.text().catch(()=>null);
+          statusEl.textContent = 'Error servidor: ' + (txt || resp.status);
+          return;
+        }
+
+        const json = await resp.json();
+        // Si tu servidor devuelve la entrada guardada en json.entry, la mostramos (recomendado)
+        if (json.entry) {
+          addrEl.textContent = json.entry.address || '(dirección no disponible)';
+          serverIpEl.textContent = json.entry.ip || '(no disponible)';
+          // marcar en mapa con popup que muestre IP detectada por servidor
+          const latF = parseFloat(json.entry.latitude);
+          const lonF = parseFloat(json.entry.longitude);
+          if (!isNaN(latF) && !isNaN(lonF)) {
+            L.marker([latF, lonF]).addTo(map)
+              .bindPopup(`<strong>Ubicación</strong><br>IP servidor: ${json.entry.ip || '(—)'}<br>${json.entry.address || ''}`)
+              .openPopup();
+            map.setView([latF, lonF], 14);
+          }
+          statusEl.textContent = 'Ubicación enviada y registrada (servidor guardó entry).';
+        } else {
+          // Fallback: el servidor no devolvió entry. Mostramos lo que tenemos.
+          addrEl.textContent = '(revisa locations.json en servidor o tu email)';
+          serverIpEl.textContent = '(revisa email o locations.json)';
+          L.marker([lat, lon]).addTo(map)
+            .bindPopup(`Tu ubicación (GPS)<br>IP cliente: ${clientIp || '(—)'}`).openPopup();
+          map.setView([lat, lon], 14);
+          statusEl.textContent = 'Ubicación enviada. Revisa locations.json o el email del admin.';
+        }
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Error enviando: ' + err.message;
+      }
+
+    }, (err) => {
+      statusEl.textContent = 'Error geolocalizando: ' + err.message;
+    }, { enableHighAccuracy:true, maximumAge:0, timeout:20000 });
+  });
+
+</script>
+</body>
+</html>
