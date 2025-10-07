@@ -1,6 +1,7 @@
 {
   "name": "iplogger-web",
   "version": "1.0.0",
+  "description": "Servidor Express simple para geolocalizador con consentimiento.",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -8,5 +9,8 @@
   },
   "dependencies": {
     "express": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
