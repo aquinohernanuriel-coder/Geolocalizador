@@ -1,56 +1,52 @@
-import express from 'express';
-import rateLimit from 'express-rate-limit';
-import fetch from 'node-fetch';
-import pkg from 'pg';
-const { Pool } = pkg;
+// server.js
+const express = require('express');
+const bodyParser = require('body-parser');
+const { Pool } = require('pg');
+const rateLimit = require('express-rate-limit');
+const cors = require('cors');
 
+// Crear app
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(bodyParser.json());
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Rate limit para evitar spam
-app.use(rateLimit({ windowMs: 1 * 60 * 1000, max: 30 }));
-
-// Servir archivos estáticos
-app.use(express.static(process.cwd()));
-app.get('/', (req, res) => res.sendFile(process.cwd() + '/index.html'));
+// Rate limiter básico
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 30, // 30 requests por IP
+});
+app.use(limiter);
 
 // Conexión a PostgreSQL
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-// Reverse geocoding
-async function getAddress(lat, lon) {
-  try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`, {
-      headers: { 'User-Agent': 'Geolocalizador-App' }
-    });
-    const data = await res.json();
-    return data.display_name || null;
-  } catch (e) {
-    return null;
+const pool = new Pool({
+  connectionString: 'postgresql://geo_locations_db_user:kUEcjuXO8EgZLPZGeOBsAALbzI1NT3np@dpg-d3i808jipnbc73dv3mig-a/geo_locations_db',
+  ssl: {
+    rejectUnauthorized: false
   }
-}
+});
 
-// POST /location
+// Servir HTML estático
+const path = require('path');
+app.use(express.static(path.join(__dirname)));
+
+// Endpoint para recibir ubicación
 app.post('/location', async (req, res) => {
   try {
-    const { latitude, longitude, clientPublicIp, consent, clientNote } = req.body;
-    if (!consent) return res.status(400).json({ ok: false, error: 'Consentimiento requerido' });
+    const { latitude, longitude, address, clientPublicIp, consent, clientNote } = req.body;
 
-    // Obtener IP real del cliente
-    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+    if (!consent) {
+      return res.status(400).json({ ok: false, error: 'Consentimiento no dado' });
+    }
 
-    const address = await getAddress(latitude, longitude);
+    // IP real del cliente
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    const query = `
-      INSERT INTO locations(latitude, longitude, address, client_public_ip, ip, client_note)
-      VALUES($1, $2, $3, $4, $5, $6)
-      RETURNING *;
-    `;
-    const values = [latitude, longitude, address, clientPublicIp, ip, clientNote];
-    const result = await pool.query(query, values);
+    // Guardar en DB
+    const result = await pool.query(
+      `INSERT INTO locations (latitude, longitude, address, client_public_ip, ip, client_note)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [latitude, longitude, address || null, clientPublicIp || null, ip, clientNote || null]
+    );
 
     res.json({ ok: true, entry: result.rows[0] });
   } catch (err) {
@@ -59,4 +55,8 @@ app.post('/location', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Servidor corriendo en http://localhost:${PORT}`));
+// Puerto dinámico para Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
+});
