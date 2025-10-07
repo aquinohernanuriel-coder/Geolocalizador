@@ -1,14 +1,12 @@
 {
-  "name": "registrate",
+  "name": "iplogger-web",
   "version": "1.0.0",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "bcrypt": "^5.1.1",
-    "body-parser": "^1.20.2",
-    "path": "^0.12.7"
+    "express": "^4.19.0"
   }
 }
